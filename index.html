@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Gradient Descent (Logistic) Calculator</title>
+  <style>
+    :root{
+      --bg:#12151a; /* slightly lighter dark grey */
+      --card:#1b2024; /* lighter card */
+      --muted:#a8b4bf;
+      --accent:#6fe7bf; /* subtle teal */
+      --accent-2:#8fa6ff; /* soft blue */
+      --input:#13161a;
+      --glass: rgba(255,255,255,0.04);
+      --radius:14px;
+    }
+    html,body{height:100%}
+    body{
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  background: linear-gradient(180deg,var(--bg),#0e1216 140px);
+  color:#e9f3fb;
+      display:flex;align-items:flex-start;justify-content:center;padding:28px 12px;
+      min-height:100vh;
+    }
+  .container{width:100%;max-width:1200px}
+    .panel{
+      background: linear-gradient(180deg,var(--card), #13171b);
+      border-radius:calc(var(--radius) - 2px);
+      padding:28px 32px;
+      box-shadow: 0 8px 30px rgba(2,6,23,0.6), inset 0 1px 0 rgba(255,255,255,0.02);
+      border: 1px solid rgba(255,255,255,0.03);
+    }
+    h1{font-size:20px;margin:0 0 8px 0;color:#eaf6ff}
+    .muted{color:var(--muted);font-size:13px}
+    label{display:block;margin-top:12px;font-weight:600;color:#dfe8f2}
+    .row{display:flex;gap:12px;margin-top:6px}
+    .col{flex:1}
+
+    input[type="number"], textarea, select{
+      width:100%;padding:10px 12px;border-radius:10px;margin-top:6px;box-sizing:border-box;
+      background: linear-gradient(180deg,var(--input), rgba(255,255,255,0.03));
+      border: 1px solid rgba(255,255,255,0.06);
+      color:#dce9f4;
+      outline:none;
+      transition: box-shadow .15s, border-color .12s, color .12s;
+      font-family: Inter, monospace;
+      font-size:14px;
+    }
+    input[type="number"]:focus, textarea:focus{
+      box-shadow: 0 8px 30px rgba(143,166,255,0.10);
+      border-color: rgba(143,166,255,0.22);
+      color:#f7fbff;
+    }
+    textarea{height:160px;resize:vertical;font-family:monospace;color:var(--muted)}
+
+    .controls{display:flex;gap:8px;margin-top:12px}
+    button{padding:9px 14px;border-radius:10px;border:none;background:linear-gradient(180deg,var(--accent), #4ad19a);color:#032018;cursor:pointer;font-weight:700}
+    button.secondary{background:transparent;color:var(--muted);border:1px solid rgba(255,255,255,0.04)}
+    button.secondary:hover{color:#fff;border-color:rgba(255,255,255,0.06)}
+    .controls > button{min-width:120px}
+
+    pre{
+      background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+      padding:12px;border-radius:12px;white-space:pre-wrap;font-family:monospace;color:#e6fff0;
+      border:1px solid rgba(255,255,255,0.04);
+    }
+    #results{max-height:260px;overflow:auto}
+    .error{color:#ff9b9b;margin-top:8px}
+    .note{color:var(--muted);font-size:13px;margin-top:8px}
+    /* center the panel vertically on taller viewports, keep top alignment on small screens */
+    @media (min-height:720px){
+      body{align-items:center;padding:48px 12px}
+      .panel{padding:28px}
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="panel">
+      <h1>Gradient Descent Calculator (Logistic — binary labels)</h1>
+      <p class="muted">Fits a logistic model p(y=1|x) = sigmoid(b + m*x) using gradient descent on cross-entropy. Output lines show intercept first, slope second.</p>
+
+      <div class="row">
+    <div class="col">
+      <label>Learning rate (η)</label>
+      <input id="lr" type="number" step="any" value="0.1" />
+    </div>
+    <div class="col">
+      <label>Epochs</label>
+      <input id="epochs" type="number" value="1000" />
+    </div>
+    <div class="col">
+      <label>Show result every <span class="muted">(including final)</span></label>
+      <input id="showEvery" type="number" value="1" />
+    </div>
+  </div>
+
+  <label>Paste dataset (CSV, first row header: x,y)</label>
+  <textarea id="data" placeholder="Required format: first line must be header 'x,y'.\nThen each row: integer x, and y in {0,1}.\nExample:\nx,y\n1,0\n2,1\n3,0\n4,1" ></textarea>
+  <div class="controls">
+    <button id="run">Run Gradient Descent</button>
+    <button id="reset" class="secondary">Reset</button>
+    <button id="copy" class="secondary">Copy Results</button>
+  </div>
+      <div id="error" class="error" aria-live="polite" role="status"></div>
+
+      <h3>Results (each line: intercept, slope)</h3>
+      <pre id="results" style="max-height:260px;overflow:auto;">0,0</pre>
+      <div id="copyFeedback" class="muted" style="margin-top:6px"></div>
+    </div>
+  </div>
+
+  <script>
+    // Utility functions
+    function sigmoid(z){
+      // stable sigmoid
+      if (z >= 0) {
+        const ez = Math.exp(-z);
+        return 1 / (1 + ez);
+      } else {
+        const ez = Math.exp(z);
+        return ez / (1 + ez);
+      }
+    }
+
+    function parseCSV(text){
+      const lines = text.trim().split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+      if (lines.length < 2) throw new Error('Not enough rows: need header + at least one data row');
+      // header check
+      const header = lines[0].split(/,|\s+/).map(s=>s.trim().toLowerCase()).filter(Boolean);
+      if (!(header[0] === 'x' && header[1] === 'y')){
+        // allow if header explicitly given but different: still proceed but warn? For now enforce header
+        throw new Error('First row must be header: "x,y"');
+      }
+      const rows = [];
+      for (let i=1;i<lines.length;i++){
+        const parts = lines[i].split(',').map(s=>s.trim()).filter(Boolean);
+        if (parts.length < 2) throw new Error('Row '+(i+1)+' is malformed');
+        const x = Number(parts[0]);
+        const y = Number(parts[1]);
+        if (!Number.isFinite(x)) throw new Error('x on row '+(i+1)+' is not a number');
+        if (!(y === 0 || y === 1)) throw new Error('y on row '+(i+1)+' must be 0 or 1');
+        rows.push({x,y});
+      }
+      if (rows.length === 0) throw new Error('No data rows found');
+      return rows;
+    }
+
+    function runGradientDescent(data, lr, epochs, showEvery){
+      // Initialize parameters to 0
+      let b = 0; // intercept
+      let m = 0; // slope
+      const N = data.length;
+      const outputs = [];
+
+      for (let epoch=1; epoch<=epochs; epoch++){
+        // compute gradients
+        let gradB = 0;
+        let gradM = 0;
+        for (let i=0;i<N;i++){
+          const xi = data[i].x;
+          const yi = data[i].y;
+          const z = b + m * xi;
+          const p = sigmoid(z);
+          const diff = p - yi; // derivative of loss w.r.t z for cross-entropy
+          gradB += diff;
+          gradM += diff * xi;
+        }
+        gradB /= N;
+        gradM /= N;
+        // update
+        b -= lr * gradB;
+        m -= lr * gradM;
+
+        if (epoch % showEvery === 0 || epoch === epochs){
+          // store values as a line: intercept, slope
+          outputs.push({epoch, b, m});
+        }
+      }
+      return outputs;
+    }
+
+    // DOM wiring
+    const runBtn = document.getElementById('run');
+    const resetBtn = document.getElementById('reset');
+    const lrInput = document.getElementById('lr');
+    const epochsInput = document.getElementById('epochs');
+    const showEveryInput = document.getElementById('showEvery');
+    const dataArea = document.getElementById('data');
+  const resultsPre = document.getElementById('results');
+    const errorDiv = document.getElementById('error');
+  const copyBtn = document.getElementById('copy');
+  const copyFeedback = document.getElementById('copyFeedback');
+
+    function setError(msg){
+      errorDiv.textContent = msg || '';
+    }
+
+    runBtn.addEventListener('click', ()=>{
+      setError('');
+      resultsPre.textContent = '(running...)';
+      try{
+        const lr = Number(lrInput.value);
+        const epochs = parseInt(epochsInput.value,10);
+        const showEvery = parseInt(showEveryInput.value,10);
+        if (!isFinite(lr) || lr <= 0) throw new Error('Learning rate must be a positive number');
+        if (!Number.isInteger(epochs) || epochs <= 0) throw new Error('Epochs must be a positive integer');
+        if (!Number.isInteger(showEvery) || showEvery <= 0) throw new Error('Show-every must be a positive integer');
+
+        const data = parseCSV(dataArea.value);
+        // run
+        const rows = runGradientDescent(data, lr, epochs, showEvery);
+        if (rows.length === 0){
+          resultsPre.textContent = '(no outputs)';
+        } else {
+          // display each line as: intercept, slope  (with epoch label optional)
+          resultsPre.textContent = rows.map(r => r.b.toFixed(6) + ', ' + r.m.toFixed(6)).join('\n');
+        }
+      } catch (err){
+        resultsPre.textContent = '(no results)';
+        setError(err.message || String(err));
+      }
+    });
+
+    resetBtn.addEventListener('click', ()=>{
+      lrInput.value = '0.1';
+      epochsInput.value = '1000';
+      showEveryInput.value = '1';
+      dataArea.value = '';
+      resultsPre.textContent = '0,0';
+      setError('');
+    });
+
+    // Copy results to clipboard
+    copyBtn.addEventListener('click', async ()=>{
+      setError('');
+      const text = resultsPre.textContent || '';
+      if (!text || text.includes('(no results')){
+        copyFeedback.textContent = 'Nothing to copy.';
+        return;
+      }
+      try{
+        await navigator.clipboard.writeText(text);
+        copyFeedback.textContent = 'Results copied to clipboard.';
+        // small visual feedback reset
+        setTimeout(()=>{ copyFeedback.textContent = ''; }, 2500);
+      } catch (err){
+        copyFeedback.textContent = 'Copy failed: ' + (err && err.message ? err.message : String(err));
+      }
+    });
+  </script>
+</body>
+</html>
